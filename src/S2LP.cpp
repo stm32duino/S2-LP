@@ -407,7 +407,10 @@ void S2LP::S2LPIrqHandler(void)
     S2LPCmdStrobeFlushRxFifo();
 
     /* Call application callback */
-    current_event_callback();
+    if(current_event_callback)
+    {
+      current_event_callback();
+    }
   }
 }
 
