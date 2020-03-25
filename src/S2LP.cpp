@@ -57,8 +57,6 @@
 
 #define XTAL_FREQUENCY          50000000U
 
-S2LP* g_s2lp_ptr = NULL;
-
 /* Class Implementation ------------------------------------------------------*/
 
 /** Constructor
@@ -71,11 +69,12 @@ S2LP* g_s2lp_ptr = NULL;
  */
 S2LP::S2LP(SPIClass *spi, int csn, int sdn, int irqn, S2LPGpioPin irq_gpio, uint8_t my_addr, uint8_t multicast_addr, uint8_t broadcast_addr, uint32_t frequency) : dev_spi(spi), csn_pin(csn), sdn_pin(sdn), irq_pin(irqn), irq_gpio_selected(irq_gpio), my_address(my_addr), multicast_address(multicast_addr), broadcast_address(broadcast_addr), lFrequencyBase(frequency)
 {
-  g_s2lp_ptr = this; // Store global
+  Callback<void()>::func = std::bind(&S2LP::S2LPIrqHandler, this);
+  irq_handler = static_cast<S2LPEventHandler>(Callback<void()>::callback);
   memset((void *)&g_xStatus, 0, sizeof(S2LPStatus));
   s_cWMbusSubmode = WMBUS_SUBMODE_NOT_CONFIGURED;
   s_lXtalFrequency = 50000000;
-  current_receive_callback = NULL;
+  current_event_callback = NULL;
   nr_of_irq_disabled = 0;
   xTxDoneFlag = RESET;
   memset((void *)vectcRxBuff, FIFO_SIZE, sizeof(uint8_t));
@@ -225,9 +224,9 @@ void S2LP::begin(void)
 * @param  func the Receive callback.
 * @retval None.
 */
-void S2LP::attachS2LPReceive(S2LPReceiveHandler func)
+void S2LP::attachS2LPReceive(S2LPEventHandler func)
 {
-  current_receive_callback = func;
+  current_event_callback = func;
 }
 
 /**
@@ -297,6 +296,11 @@ uint8_t S2LP::send(uint8_t *payload, uint8_t payload_len, uint8_t dest_addr, boo
 
   /* Return to RX state */
   S2LPCmdStrobeCommand(CMD_RX);
+
+  do
+  {
+    S2LPRefreshStatus();
+  } while(g_xStatus.MC_STATE != MC_STATE_RX);
 
   disableS2LPIrq();
 
@@ -383,6 +387,11 @@ void S2LP::S2LPIrqHandler(void)
   {
     /* Restart RX state */
     S2LPCmdStrobeCommand(CMD_RX);
+
+    do
+    {
+      S2LPRefreshStatus();
+    } while(g_xStatus.MC_STATE != MC_STATE_RX);
   }
 
   /* Check the S2LP RX_DATA_READY IRQ flag */
@@ -398,7 +407,7 @@ void S2LP::S2LPIrqHandler(void)
     S2LPCmdStrobeFlushRxFifo();
 
     /* Call application callback */
-    current_receive_callback();
+    current_event_callback();
   }
 }
 
@@ -425,7 +434,7 @@ void S2LP::enableS2LPIrq(void)
     nr_of_irq_disabled--;
     if(nr_of_irq_disabled == 0)
     {
-      attachInterrupt(irq_pin, S2LPIrqHandlerWrapper, FALLING);
+      attachInterrupt(irq_pin, irq_handler, FALLING);
     }
   }
 }
@@ -586,12 +595,4 @@ void S2LP::S2LPManagementRcoCalibration(void)
   tmp2 &= 0xFE;
 
   S2LPSpiWriteRegisters(0x6D, 1, &tmp2);
-}
-
-void S2LPIrqHandlerWrapper(void)
-{
-  if(g_s2lp_ptr)
-  {
-    g_s2lp_ptr->S2LPIrqHandler();
-  }
 }

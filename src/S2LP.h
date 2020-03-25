@@ -60,12 +60,28 @@
 #include "S2LP_Timer.h"
 #include "S2LP_Timer_ex.h"
 #include "S2LP_Types.h"
+#include <functional>
 
 /* Defines -------------------------------------------------------------------*/
 #define FIFO_SIZE 128
 
 /* Typedefs ------------------------------------------------------------------*/
-typedef void (*S2LPReceiveHandler)(void);
+template <typename T>
+struct Callback;
+
+template <typename Ret, typename... Params>
+struct Callback<Ret(Params...)> {
+   template <typename... Args>
+   static Ret callback(Args... args) {
+      return func(args...);
+   }
+   static std::function<Ret(Params...)> func;
+};
+
+template <typename Ret, typename... Params>
+std::function<Ret(Params...)> Callback<Ret(Params...)>::func;
+
+typedef void (*S2LPEventHandler)(void);
 
 /* Class Declaration ---------------------------------------------------------*/
    
@@ -77,16 +93,12 @@ class S2LP
   public:
     S2LP(SPIClass *spi, int csn, int sdn, int irqn, S2LPGpioPin irq_gpio=S2LP_GPIO_3, uint8_t my_addr=0x44, uint8_t multicast_addr=0xEE, uint8_t broadcast_addr=0xFF, uint32_t frequency = 868000000);
     void begin(void);
-    void attachS2LPReceive(S2LPReceiveHandler func);
+    void attachS2LPReceive(S2LPEventHandler func);
     uint8_t send(uint8_t *payload, uint8_t payload_len, uint8_t dest_addr, bool use_csma_ca = true);
     uint8_t getRecvPayloadLen(void);
     uint8_t read(uint8_t *payload, uint8_t payload_len);
-    /** S2-LP Irq Callback */
-    void S2LPIrqHandler(void);
-	void disableS2LPIrq(void);
-    void enableS2LPIrq(void);
 
-  private:
+  protected:
     S2LPStatus S2LPSpiWriteRegisters(uint8_t cRegAddress, uint8_t cNbBytes, uint8_t* pcBuffer);
     S2LPStatus S2LPSpiReadRegisters(uint8_t cRegAddress, uint8_t cNbBytes, uint8_t* pcBuffer);
     S2LPStatus S2LPSpiCommandStrobes(uint8_t cCommandCode);
@@ -318,6 +330,10 @@ class S2LP
     void S2LPTimerGetWakeUpTimer(float* pfWakeUpMsec, uint8_t* pcCounter , uint8_t* pcPrescaler, uint8_t* pcMulti);
     void S2LPTimerGetWakeUpTimerReload(float* pfWakeUpReloadMsec, uint8_t* pcCounter, uint8_t* pcPrescaler, uint8_t* pcMulti);
     void S2LPTimerComputeWakeUpValues(float fDesiredMsec , uint8_t* pcCounter , uint8_t* pcPrescaler);
+    /** S2-LP Irq Callback */
+    void S2LPIrqHandler(void);
+    void disableS2LPIrq(void);
+    void enableS2LPIrq(void);
 
     SPIClass *dev_spi;
     int csn_pin;
@@ -331,20 +347,13 @@ class S2LP
     S2LPStatus g_xStatus;
     WMbusSubmode s_cWMbusSubmode;
     uint32_t s_lXtalFrequency;
-	S2LPReceiveHandler current_receive_callback;
+    S2LPEventHandler current_event_callback;
+    S2LPEventHandler irq_handler;
     int nr_of_irq_disabled;
     volatile FlagStatus xTxDoneFlag;
     uint8_t vectcRxBuff[FIFO_SIZE];
     uint8_t vectcTxBuff[FIFO_SIZE];
     uint8_t cRxData;
 };
-
-#ifdef __cplusplus
- extern "C" {
-#endif
-void S2LPIrqHandlerWrapper(void);
-#ifdef __cplusplus
-  }
-#endif
 
 #endif /* __S2LP_H__ */
