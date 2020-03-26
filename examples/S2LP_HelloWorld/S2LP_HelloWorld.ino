@@ -46,14 +46,12 @@
 SPIClass *devSPI;
 S2LP *myS2LP;
 volatile uint8_t receive_packet = 0;
-volatile uint8_t button_pushed = 0;
 const int buttonPin = PC13; // set buttonPin to digital pin PC13 */
 int pushButtonState = LOW;
 
 static uint8_t send_buf[FIFO_SIZE] ={'S','2','L','P',' ','H','E','L','L','O',' ','W','O','R','L','D',' ','P','2','P',' ','D','E','M','O'};
 static uint8_t read_buf[FIFO_SIZE] ={0};
 
-void push_button(void);
 void callback_func(void);
 void recv_data(void);
 void blink_led(void);
@@ -69,9 +67,8 @@ void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
 
   // Initialize Button
-  pinMode(buttonPin, INPUT_PULLDOWN);
+  pinMode(buttonPin, INPUT);
   pushButtonState = (digitalRead(buttonPin)) ?  LOW : HIGH;
-  attachInterrupt(buttonPin, push_button, RISING);
 
   // Initialize SPI
   devSPI = new SPIClass(D11, D12, D3);
@@ -86,7 +83,7 @@ void setup() {
 /* Loop ----------------------------------------------------------------------*/
 
 void loop() {
-  if(button_pushed)
+  if(digitalRead(buttonPin) == pushButtonState)
   {
     /* Debouncing */
     HAL_Delay(50);
@@ -96,8 +93,6 @@ void loop() {
 
     /* Debouncing */
     HAL_Delay(50);
-
-    button_pushed = 0;
 
     if(!myS2LP->send(send_buf, (strlen((char *)send_buf) + 1), 0x44, true))
     {
@@ -134,11 +129,6 @@ void recv_data(void)
   SerialPort.print(data_size);
   SerialPort.print(" bytes): ");
   SerialPort.println((char *)read_buf);
-}
-
-void push_button(void)
-{
-  button_pushed = 1;
 }
 
 void callback_func(void)
