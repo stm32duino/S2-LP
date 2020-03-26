@@ -13,6 +13,7 @@ S2LP	KEYWORD1
 #######################################
 
 begin	KEYWORD2
+end	KEYWORD2
 attachS2LPReceive	KEYWORD2
 send	KEYWORD2
 getRecvPayloadLen	KEYWORD2
