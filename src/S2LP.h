@@ -99,6 +99,12 @@ class S2LP
     uint8_t read(uint8_t *payload, uint8_t payload_len);
 
   protected:
+    void S2LPSetReadyState(void);
+    S2LPCutType S2LPManagementGetCut(void);
+    /** S2-LP Irq Callback */
+    void S2LPIrqHandler(void);
+    void disableS2LPIrq(void);
+    void enableS2LPIrq(void);
     S2LPStatus S2LPSpiWriteRegisters(uint8_t cRegAddress, uint8_t cNbBytes, uint8_t* pcBuffer);
     S2LPStatus S2LPSpiReadRegisters(uint8_t cRegAddress, uint8_t cNbBytes, uint8_t* pcBuffer);
     S2LPStatus S2LPSpiCommandStrobes(uint8_t cCommandCode);
@@ -330,10 +336,6 @@ class S2LP
     void S2LPTimerGetWakeUpTimer(float* pfWakeUpMsec, uint8_t* pcCounter , uint8_t* pcPrescaler, uint8_t* pcMulti);
     void S2LPTimerGetWakeUpTimerReload(float* pfWakeUpReloadMsec, uint8_t* pcCounter, uint8_t* pcPrescaler, uint8_t* pcMulti);
     void S2LPTimerComputeWakeUpValues(float fDesiredMsec , uint8_t* pcCounter , uint8_t* pcPrescaler);
-    /** S2-LP Irq Callback */
-    void S2LPIrqHandler(void);
-    void disableS2LPIrq(void);
-    void enableS2LPIrq(void);
 
     SPIClass *dev_spi;
     int csn_pin;

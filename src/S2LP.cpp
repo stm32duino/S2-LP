@@ -57,6 +57,10 @@
 
 #define XTAL_FREQUENCY          50000000U
 
+#define PREAMBLE_LENGTH (64*4)
+#define DATARATE 38400
+#define MIN_PERIOD_WAKEUP ((8000*((PREAMBLE_LENGTH/4)-2))/DATARATE)
+
 /* Class Implementation ------------------------------------------------------*/
 
 /** Constructor
@@ -130,7 +134,7 @@ void S2LP::begin(void)
   SRadioInit xRadioInit = {
     868000000,  /* base carrier frequency */
     MOD_2FSK,   /* modulation type */
-    38400,      /* data rate */
+    DATARATE,   /* data rate */
     20000,      /* frequency deviation */
     100000      /* bandwidth */
   };
@@ -146,7 +150,7 @@ void S2LP::begin(void)
   S2LPRadioSetPALevelMaxIndex(7);
 
   PktBasicInit xBasicInit={
-    16,                 /* Preamble length */
+    PREAMBLE_LENGTH,    /* Preamble length */
     32,                 /* Sync length */
     0x88888888,         /* Sync word */
     S_ENABLE,           /* Variable length */
@@ -197,24 +201,32 @@ void S2LP::begin(void)
 
   /* S2LP IRQs enable */
   S2LPGpioIrqDeInit(NULL);
-  S2LPGpioIrqConfig(RX_DATA_DISC,S_ENABLE);
   S2LPGpioIrqConfig(RX_DATA_READY,S_ENABLE);
   S2LPGpioIrqConfig(TX_DATA_SENT , S_ENABLE);
-
-  /* Set infinite Timeout */
-  S2LPTimerSetRxTimerCounter(0);
-  S2LPTimerSetRxTimerStopCondition(ANY_ABOVE_THRESHOLD);
 
   /* IRQ registers blanking */
   S2LPGpioIrqClearStatus();
 
-  /* Go in RX mode */
-  S2LPCmdStrobeCommand(CMD_RX);
+  /* clear FIFO if needed */
+  S2LPCmdStrobeFlushRxFifo();
 
-  do
-  {
-    S2LPRefreshStatus();
-  } while(g_xStatus.MC_STATE != MC_STATE_RX);
+  /* set the LDC mode wkup */
+  S2LPTimerSetWakeUpTimerUs(1000*MIN_PERIOD_WAKEUP);
+
+  /* set the rx timeout */
+  S2LPTimerSetRxTimerUs(30000);
+
+  /* use SLEEP_A mode (default) */
+  S2LPTimerSleepB(S_DISABLE);
+
+  /* enable LDC mode, FAST RX TERM and start Rx */
+  S2LPTimerLdcrMode(S_ENABLE);
+
+  /* enable the fast rx timer */
+  S2LpTimerFastRxTermTimer(S_ENABLE);
+
+  /* the RX command triggers the LDC in fast RX termination mode */
+  S2LPCmdStrobeCommand(CMD_RX);
 
   enableS2LPIrq();
 }
@@ -250,13 +262,12 @@ uint8_t S2LP::send(uint8_t *payload, uint8_t payload_len, uint8_t dest_addr, boo
 
   disableS2LPIrq();
 
-  /* Go from RX to Ready mode */
-  S2LPCmdStrobeCommand(CMD_SABORT);
+  /* Go to Ready mode */
+  S2LPSetReadyState();
 
-  do
-  {
-    S2LPRefreshStatus();
-  } while(g_xStatus.MC_STATE != MC_STATE_READY);
+  /* Disable LDC */
+  S2LPTimerLdcrMode(S_DISABLE);
+  S2LpTimerFastRxTermTimer(S_DISABLE);
 
   S2LPPktBasicSetPayloadLength(payload_len);
 
@@ -294,13 +305,12 @@ uint8_t S2LP::send(uint8_t *payload, uint8_t payload_len, uint8_t dest_addr, boo
     S2LPCsma(S_DISABLE);
   }
 
+  /* Enable LDC */
+  S2LPTimerLdcrMode(S_ENABLE);
+  S2LpTimerFastRxTermTimer(S_ENABLE);
+
   /* Return to RX state */
   S2LPCmdStrobeCommand(CMD_RX);
-
-  do
-  {
-    S2LPRefreshStatus();
-  } while(g_xStatus.MC_STATE != MC_STATE_RX);
 
   disableS2LPIrq();
 
@@ -350,17 +360,51 @@ uint8_t S2LP::read(uint8_t *payload, uint8_t payload_len)
 
   cRxData = 0;
 
-  /* Return to RX state */
-  S2LPCmdStrobeCommand(CMD_RX);
+  /* Return to Sleep state */
+  S2LPCmdStrobeCommand(CMD_SLEEP);
 
-  do
+  if(S2LPManagementGetCut()==S2LP_CUT_2_0)
   {
-    S2LPRefreshStatus();
-  } while(g_xStatus.MC_STATE != MC_STATE_RX);
+    /* apply the workaround to exit from SLEEP (2nd part) */
+    delay(6);
+    S2LPTimerLdcIrqWa(S_DISABLE);
+  }
 
   enableS2LPIrq();
 
   return ret_val;
+}
+
+/**
+* @brief  Set the Ready state.
+* @param  None.
+* @retval None.
+*/
+void S2LP::S2LPSetReadyState(void)
+{
+  S2LPRefreshStatus();
+
+  if(g_xStatus.MC_STATE == MC_STATE_RX || g_xStatus.MC_STATE == MC_STATE_TX)
+  {
+    S2LPCmdStrobeCommand(CMD_SABORT);
+  } else
+  {
+    S2LPCmdStrobeCommand(CMD_READY);
+  }
+
+  do
+  {
+    S2LPRefreshStatus();
+  } while(g_xStatus.MC_STATE != MC_STATE_READY);
+}
+
+S2LPCutType S2LP::S2LPManagementGetCut(void)
+{
+  uint8_t tmp;
+
+  /* Read Cut version from S2LP register */
+  S2LPSpiReadRegisters(0xF1, 1, &tmp);
+  return (S2LPCutType)tmp;
 }
 
 /**
@@ -382,21 +426,14 @@ void S2LP::S2LPIrqHandler(void)
     xTxDoneFlag = SET;
   }
 
-  /* RX Data discarded */
-  if(xIrqStatus.IRQ_RX_DATA_DISC)
-  {
-    /* Restart RX state */
-    S2LPCmdStrobeCommand(CMD_RX);
-
-    do
-    {
-      S2LPRefreshStatus();
-    } while(g_xStatus.MC_STATE != MC_STATE_RX);
-  }
-
   /* Check the S2LP RX_DATA_READY IRQ flag */
   if(xIrqStatus.IRQ_RX_DATA_READY)
   {
+    if(S2LPManagementGetCut()==S2LP_CUT_2_0)
+    {/* apply the workaround to exit from SLEEP (1st part) */
+      S2LPTimerLdcIrqWa(S_ENABLE);
+    }
+
     /* Get the RX FIFO size */
     cRxData = S2LPFifoReadNumberBytesRxFifo();
 

@@ -126,6 +126,13 @@ typedef struct {
   uint8_t : 3;               /*!< This 3 bits field are reserved and equal to 2 */
 }S2LPStatus;
 
+typedef enum
+{
+  S2LP_CUT_2_1 = 0x91,
+  S2LP_CUT_2_0 = 0x81,
+  S2LP_CUT_3_0 = 0xC1,
+} S2LPCutType;
+
 
 /**
  * @}
