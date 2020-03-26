@@ -232,6 +232,42 @@ void S2LP::begin(void)
 }
 
 /**
+* @brief  DeInitialize the S2-LP library.
+* @param  None.
+* @retval None.
+*/
+void S2LP::end(void)
+{
+  /* Shutdown the S2-LP */
+  digitalWrite(sdn_pin, HIGH);
+  delay(1);
+  digitalWrite(sdn_pin, LOW);
+  delay(1);
+
+  /* S2-LP soft reset */
+  S2LPCmdStrobeSres();
+
+  /* Detach S2-LP IRQ */
+  detachInterrupt(irq_pin);
+
+  /* Reset CSN pin */
+  pinMode(csn_pin, INPUT);
+
+  /* Reset SDN pin */
+  pinMode(sdn_pin, INPUT);
+
+  /* Reset all internal variables */  
+  memset((void *)&g_xStatus, 0, sizeof(S2LPStatus));
+  s_cWMbusSubmode = WMBUS_SUBMODE_NOT_CONFIGURED;
+  s_lXtalFrequency = 50000000;
+  current_event_callback = NULL;
+  nr_of_irq_disabled = 0;
+  xTxDoneFlag = RESET;
+  memset((void *)vectcRxBuff, FIFO_SIZE, sizeof(uint8_t));
+  cRxData = 0;
+}
+
+/**
 * @brief  Attach the callback for Receive event.
 * @param  func the Receive callback.
 * @retval None.

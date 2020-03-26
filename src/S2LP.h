@@ -93,6 +93,7 @@ class S2LP
   public:
     S2LP(SPIClass *spi, int csn, int sdn, int irqn, S2LPGpioPin irq_gpio=S2LP_GPIO_3, uint8_t my_addr=0x44, uint8_t multicast_addr=0xEE, uint8_t broadcast_addr=0xFF, uint32_t frequency = 868000000);
     void begin(void);
+    void end(void);
     void attachS2LPReceive(S2LPEventHandler func);
     uint8_t send(uint8_t *payload, uint8_t payload_len, uint8_t dest_addr, bool use_csma_ca = true);
     uint8_t getRecvPayloadLen(void);
