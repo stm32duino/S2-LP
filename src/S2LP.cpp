@@ -71,13 +71,12 @@
  * @param irq_gpio the S2-LP gpio used to receive the IRQ events 
  * @param frequency the base carrier frequency in Hz
  */
-S2LP::S2LP(SPIClass *spi, int csn, int sdn, int irqn, S2LPGpioPin irq_gpio, uint8_t my_addr, uint8_t multicast_addr, uint8_t broadcast_addr, uint32_t frequency) : dev_spi(spi), csn_pin(csn), sdn_pin(sdn), irq_pin(irqn), irq_gpio_selected(irq_gpio), my_address(my_addr), multicast_address(multicast_addr), broadcast_address(broadcast_addr), lFrequencyBase(frequency)
+S2LP::S2LP(SPIClass *spi, int csn, int sdn, int irqn, uint32_t frequency, uint32_t xtalFrequency, PAInfo_t paInfo, S2LPGpioPin irq_gpio, uint8_t my_addr, uint8_t multicast_addr, uint8_t broadcast_addr) : dev_spi(spi), csn_pin(csn), sdn_pin(sdn), irq_pin(irqn), lFrequencyBase(frequency), s_lXtalFrequency(xtalFrequency), s_paInfo(paInfo), irq_gpio_selected(irq_gpio), my_address(my_addr), multicast_address(multicast_addr), broadcast_address(broadcast_addr)
 {
   Callback<void()>::func = std::bind(&S2LP::S2LPIrqHandler, this);
   irq_handler = static_cast<S2LPEventHandler>(Callback<void()>::callback);
   memset((void *)&g_xStatus, 0, sizeof(S2LPStatus));
   s_cWMbusSubmode = WMBUS_SUBMODE_NOT_CONFIGURED;
-  s_lXtalFrequency = 50000000;
   current_event_callback = NULL;
   nr_of_irq_disabled = 0;
   xTxDoneFlag = RESET;
@@ -145,7 +144,24 @@ void S2LP::begin(void)
 
   S2LPRadioSetMaxPALevel(S_DISABLE);
 
-  S2LPRadioSetPALeveldBm(7, 12);
+  if(s_paInfo.paRfRangeExtender == RANGE_EXT_NONE)
+  {
+    S2LPRadioSetPALeveldBm(7, 12);
+  } else
+  {
+    /* in case we are using a board with external PA, the S2LPRadioSetPALeveldBm will be not functioning because
+    the output power is affected by the amplification of this external component.
+    Set the raw register. */
+    /* For example, paLevelValue=0x25 will give about 19dBm on a STEVAL FKI-915V1 */
+    S2LPSpiWriteRegisters(PA_POWER8_ADDR, 1, &s_paInfo.paLevelValue);
+
+    if(s_paInfo.paRfRangeExtender == RANGE_EXT_SKYWORKS_SE2435L)
+    {
+      S2LPGpioInit(&s_paInfo.paSignalCSD);
+      S2LPGpioInit(&s_paInfo.paSignalCPS);
+      S2LPGpioInit(&s_paInfo.paSignalCTX);
+    }
+  }
 
   S2LPRadioSetPALevelMaxIndex(7);
 
@@ -259,7 +275,6 @@ void S2LP::end(void)
   /* Reset all internal variables */  
   memset((void *)&g_xStatus, 0, sizeof(S2LPStatus));
   s_cWMbusSubmode = WMBUS_SUBMODE_NOT_CONFIGURED;
-  s_lXtalFrequency = 50000000;
   current_event_callback = NULL;
   nr_of_irq_disabled = 0;
   xTxDoneFlag = RESET;

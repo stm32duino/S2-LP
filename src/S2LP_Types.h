@@ -127,6 +127,19 @@ typedef struct {
 }S2LPStatus;
 
 /**
+ * @brief S2LP Range Extender type. This definition represents the possible Range Extender of the S2-LP
+ *        component.
+ */
+typedef enum
+{
+  RANGE_EXT_NONE = 0,
+  RANGE_EXT_SKY_66100_11 = 1,
+  RANGE_EXT_SKYWORKS_SE2435L = 2,
+  RANGE_EXT_SKYWORKS_SKY66420 = 3,
+  RANGE_EXT_CUSTOM = 4
+} RangeExtType;
+
+/**
  * @brief S2LP CUT type. This definition represents the possible CUT versions of the S2-LP
  *        component.
  */

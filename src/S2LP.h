@@ -83,6 +83,14 @@ std::function<Ret(Params...)> Callback<Ret(Params...)>::func;
 
 typedef void (*S2LPEventHandler)(void);
 
+typedef struct PAInfo_s {
+  RangeExtType paRfRangeExtender;
+  SGpioInit paSignalCSD;
+  SGpioInit paSignalCPS;
+  SGpioInit paSignalCTX;
+  uint8_t paLevelValue;
+} PAInfo_t;
+
 /* Class Declaration ---------------------------------------------------------*/
    
 /**
@@ -91,7 +99,7 @@ typedef void (*S2LPEventHandler)(void);
 class S2LP
 {
   public:
-    S2LP(SPIClass *spi, int csn, int sdn, int irqn, S2LPGpioPin irq_gpio=S2LP_GPIO_3, uint8_t my_addr=0x44, uint8_t multicast_addr=0xEE, uint8_t broadcast_addr=0xFF, uint32_t frequency = 868000000);
+    S2LP(SPIClass *spi, int csn, int sdn, int irqn, uint32_t frequency=868000000, uint32_t xtalFrequency=50000000, PAInfo_t paInfo={.paRfRangeExtender=RANGE_EXT_NONE, .paSignalCSD={S2LP_GPIO_0, S2LP_GPIO_MODE_DIGITAL_OUTPUT_LP, S2LP_GPIO_DIG_OUT_TX_RX_MODE}, .paSignalCPS={S2LP_GPIO_1, S2LP_GPIO_MODE_DIGITAL_OUTPUT_LP, S2LP_GPIO_DIG_OUT_RX_STATE}, .paSignalCTX={S2LP_GPIO_2, S2LP_GPIO_MODE_DIGITAL_OUTPUT_LP, S2LP_GPIO_DIG_OUT_TX_STATE}, .paLevelValue=0x25}, S2LPGpioPin irq_gpio=S2LP_GPIO_3, uint8_t my_addr=0x44, uint8_t multicast_addr=0xEE, uint8_t broadcast_addr=0xFF);
     void begin(void);
     void end(void);
     void attachS2LPReceive(S2LPEventHandler func);
@@ -342,14 +350,15 @@ class S2LP
     int csn_pin;
     int sdn_pin;
     int irq_pin;
+    uint32_t lFrequencyBase;
+    uint32_t s_lXtalFrequency;
+    PAInfo_t s_paInfo;
     S2LPGpioPin irq_gpio_selected;
     uint8_t my_address;
     uint8_t multicast_address;
     uint8_t broadcast_address;
-    uint32_t lFrequencyBase;
     S2LPStatus g_xStatus;
     WMbusSubmode s_cWMbusSubmode;
-    uint32_t s_lXtalFrequency;
     S2LPEventHandler current_event_callback;
     S2LPEventHandler irq_handler;
     int nr_of_irq_disabled;
