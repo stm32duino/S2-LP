@@ -1,0 +1,26 @@
+#######################################
+# Syntax Coloring Map For S2-LP
+#######################################
+
+#######################################
+# Datatypes (KEYWORD1)
+#######################################
+
+S2LP	KEYWORD1
+
+#######################################
+# Methods and Functions (KEYWORD2)
+#######################################
+
+begin	KEYWORD2
+end	KEYWORD2
+attachS2LPReceive	KEYWORD2
+send	KEYWORD2
+getRecvPayloadLen	KEYWORD2
+read	KEYWORD2
+
+#######################################
+# Constants (LITERAL1)
+#######################################
+
+FIFO_SIZE	LITERAL1
