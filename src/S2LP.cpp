@@ -68,8 +68,13 @@
  * @param csn the spi chip select pin
  * @param sdn the shutdown pin
  * @param irqn the pin to receive IRQ event
- * @param irq_gpio the S2-LP gpio used to receive the IRQ events 
  * @param frequency the base carrier frequency in Hz
+ * @param xtalFrequency the crystal oscillator frequency
+ * @param paInfo information about external power amplifier
+ * @param irq_gpio the S2-LP gpio used to receive the IRQ events
+ * @param my_addr address of the device
+ * @param multicast_addr multicast address
+ * @param broadcast_addr broadcast address
  */
 S2LP::S2LP(SPIClass *spi, int csn, int sdn, int irqn, uint32_t frequency, uint32_t xtalFrequency, PAInfo_t paInfo, S2LPGpioPin irq_gpio, uint8_t my_addr, uint8_t multicast_addr, uint8_t broadcast_addr) : dev_spi(spi), csn_pin(csn), sdn_pin(sdn), irq_pin(irqn), lFrequencyBase(frequency), s_lXtalFrequency(xtalFrequency), s_paInfo(paInfo), irq_gpio_selected(irq_gpio), my_address(my_addr), multicast_address(multicast_addr), broadcast_address(broadcast_addr)
 {
@@ -80,8 +85,11 @@ S2LP::S2LP(SPIClass *spi, int csn, int sdn, int irqn, uint32_t frequency, uint32
   current_event_callback = NULL;
   nr_of_irq_disabled = 0;
   xTxDoneFlag = RESET;
-  memset((void *)vectcRxBuff, FIFO_SIZE, sizeof(uint8_t));
+  memset((void *)vectcRxBuff, 0, FIFO_SIZE*sizeof(uint8_t));
+  memset((void *)vectcTxBuff, 0, FIFO_SIZE*sizeof(uint8_t));
   cRxData = 0;
+  is_waiting_for_read = false;
+  is_tx_done_before_read = false;
 }
 
 /**
@@ -106,39 +114,20 @@ void S2LP::begin(void)
   S2LPCmdStrobeSres();
 
   SGpioInit xGpioIRQ={
-    S2LP_GPIO_3,
+    irq_gpio_selected,
     S2LP_GPIO_MODE_DIGITAL_OUTPUT_LP,
     S2LP_GPIO_DIG_OUT_IRQ  
   };
 
-  switch(irq_gpio_selected)
-  {
-    case S2LP_GPIO_0:
-      xGpioIRQ.xS2LPGpioPin = S2LP_GPIO_0;
-      break;
-    case S2LP_GPIO_1:
-      xGpioIRQ.xS2LPGpioPin = S2LP_GPIO_1;
-      break;
-    case S2LP_GPIO_2:
-      xGpioIRQ.xS2LPGpioPin = S2LP_GPIO_2;
-      break;
-    case S2LP_GPIO_3:
-      xGpioIRQ.xS2LPGpioPin = S2LP_GPIO_3;
-    default:
-      break;
-  }
-
   S2LPGpioInit(&xGpioIRQ);
 
   SRadioInit xRadioInit = {
-    868000000,  /* base carrier frequency */
-    MOD_2FSK,   /* modulation type */
-    DATARATE,   /* data rate */
-    20000,      /* frequency deviation */
-    100000      /* bandwidth */
+    lFrequencyBase, /* base carrier frequency */
+    MOD_2FSK,       /* modulation type */
+    DATARATE,       /* data rate */
+    20000,          /* frequency deviation */
+    100000          /* bandwidth */
   };
-
-  xRadioInit.lFrequencyBase = lFrequencyBase;
 
   S2LPRadioInit(&xRadioInit);
 
@@ -278,8 +267,11 @@ void S2LP::end(void)
   current_event_callback = NULL;
   nr_of_irq_disabled = 0;
   xTxDoneFlag = RESET;
-  memset((void *)vectcRxBuff, FIFO_SIZE, sizeof(uint8_t));
+  memset((void *)vectcRxBuff, 0, FIFO_SIZE*sizeof(uint8_t));
+  memset((void *)vectcTxBuff, 0, FIFO_SIZE*sizeof(uint8_t));
   cRxData = 0;
+  is_waiting_for_read = false;
+  is_tx_done_before_read = false;
 }
 
 /**
@@ -314,7 +306,11 @@ uint8_t S2LP::send(uint8_t *payload, uint8_t payload_len, uint8_t dest_addr, boo
   disableS2LPIrq();
 
   /* Go to Ready mode */
-  S2LPSetReadyState();
+  if(S2LPSetReadyState())
+  {
+    enableS2LPIrq();
+    return 1;
+  }
 
   /* Disable LDC */
   S2LPTimerLdcrMode(S_DISABLE);
@@ -349,7 +345,7 @@ uint8_t S2LP::send(uint8_t *payload, uint8_t payload_len, uint8_t dest_addr, boo
   do
   {
     current_time = millis();
-  } while(!xTxDoneFlag && (current_time - start_time) <= 3000);
+  } while(!xTxDoneFlag && (current_time - start_time) <= 1000);
 
   if(use_csma_ca)
   {
@@ -360,8 +356,14 @@ uint8_t S2LP::send(uint8_t *payload, uint8_t payload_len, uint8_t dest_addr, boo
   S2LPTimerLdcrMode(S_ENABLE);
   S2LpTimerFastRxTermTimer(S_ENABLE);
 
-  /* Return to RX state */
-  S2LPCmdStrobeCommand(CMD_RX);
+  if(is_waiting_for_read)
+  {
+    is_tx_done_before_read = true;
+  } else
+  {
+    /* Return to RX state */
+    S2LPCmdStrobeCommand(CMD_RX);
+  }
 
   disableS2LPIrq();
 
@@ -411,14 +413,25 @@ uint8_t S2LP::read(uint8_t *payload, uint8_t payload_len)
 
   cRxData = 0;
 
-  /* Return to Sleep state */
-  S2LPCmdStrobeCommand(CMD_SLEEP);
+  is_waiting_for_read = false;
 
-  if(S2LPManagementGetCut()==S2LP_CUT_2_0)
+  if(is_tx_done_before_read)
   {
-    /* apply the workaround to exit from SLEEP (2nd part) */
-    delay(6);
-    S2LPTimerLdcIrqWa(S_DISABLE);
+    is_tx_done_before_read = false;
+
+    /* Return to RX state */
+    S2LPCmdStrobeCommand(CMD_RX);
+  } else
+  {
+    /* Return to Sleep state */
+    S2LPCmdStrobeCommand(CMD_SLEEP);
+
+    if(S2LPManagementGetCut()==S2LP_CUT_2_0)
+    {
+      /* apply the workaround to exit from SLEEP (2nd part) */
+      delay(6);
+      S2LPTimerLdcIrqWa(S_DISABLE);
+    }
   }
 
   enableS2LPIrq();
@@ -429,24 +442,39 @@ uint8_t S2LP::read(uint8_t *payload, uint8_t payload_len)
 /**
 * @brief  Set the Ready state.
 * @param  None.
-* @retval None.
+* @retval zero in case of success, non-zero error code otherwise.
 */
-void S2LP::S2LPSetReadyState(void)
+uint8_t S2LP::S2LPSetReadyState(void)
 {
-  S2LPRefreshStatus();
+  uint8_t ret_val = 0;
+  uint32_t start_time;
+  uint32_t current_time;
 
-  if(g_xStatus.MC_STATE == MC_STATE_RX || g_xStatus.MC_STATE == MC_STATE_TX)
-  {
-    S2LPCmdStrobeCommand(CMD_SABORT);
-  } else
-  {
-    S2LPCmdStrobeCommand(CMD_READY);
-  }
+  start_time = millis();
 
   do
   {
     S2LPRefreshStatus();
-  } while(g_xStatus.MC_STATE != MC_STATE_READY);
+
+    if(g_xStatus.MC_STATE == MC_STATE_RX || g_xStatus.MC_STATE == MC_STATE_TX)
+    {
+      S2LPCmdStrobeCommand(CMD_SABORT);
+    } else
+    {
+      S2LPCmdStrobeCommand(CMD_READY);
+    }
+
+    S2LPRefreshStatus();
+
+    current_time = millis();
+  } while(g_xStatus.MC_STATE != MC_STATE_READY && (current_time - start_time) <= 1000);
+
+  if((current_time - start_time) > 1000)
+  {
+    ret_val = 1;
+  }
+
+  return ret_val;
 }
 
 S2LPCutType S2LP::S2LPManagementGetCut(void)
@@ -493,6 +521,8 @@ void S2LP::S2LPIrqHandler(void)
 
     /* Flush the RX FIFO */
     S2LPCmdStrobeFlushRxFifo();
+
+    is_waiting_for_read = true;
 
     /* Call application callback */
     if(current_event_callback)
