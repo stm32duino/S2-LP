@@ -108,7 +108,7 @@ class S2LP
     uint8_t read(uint8_t *payload, uint8_t payload_len);
 
   protected:
-    void S2LPSetReadyState(void);
+    uint8_t S2LPSetReadyState(void);
     S2LPCutType S2LPManagementGetCut(void);
     /** S2-LP Irq Callback */
     void S2LPIrqHandler(void);
@@ -366,6 +366,8 @@ class S2LP
     uint8_t vectcRxBuff[FIFO_SIZE];
     uint8_t vectcTxBuff[FIFO_SIZE];
     uint8_t cRxData;
+    volatile bool is_waiting_for_read;
+    volatile bool is_tx_done_before_read;
 };
 
 #endif /* __S2LP_H__ */
