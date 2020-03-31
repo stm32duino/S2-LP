@@ -90,6 +90,7 @@ S2LP::S2LP(SPIClass *spi, int csn, int sdn, int irqn, uint32_t frequency, uint32
   cRxData = 0;
   is_waiting_for_read = false;
   is_tx_done_before_read = false;
+  is_bypass_enabled = false;
 }
 
 /**
@@ -146,9 +147,14 @@ void S2LP::begin(void)
 
     if(s_paInfo.paRfRangeExtender == RANGE_EXT_SKYWORKS_SE2435L)
     {
-      S2LPGpioInit(&s_paInfo.paSignalCSD);
-      S2LPGpioInit(&s_paInfo.paSignalCPS);
-      S2LPGpioInit(&s_paInfo.paSignalCTX);
+      S2LPGpioInit(&s_paInfo.paSignalCSD_S2LP);
+      S2LPGpioInit(&s_paInfo.paSignalCPS_S2LP);
+      S2LPGpioInit(&s_paInfo.paSignalCTX_S2LP);
+    } else if(s_paInfo.paRfRangeExtender == RANGE_EXT_SKYWORKS_SKY66420)
+    {
+      pinMode(s_paInfo.paSignalCSD_MCU, OUTPUT);
+      pinMode(s_paInfo.paSignalCPS_MCU, OUTPUT);
+      pinMode(s_paInfo.paSignalCTX_MCU, OUTPUT);
     }
   }
 
@@ -230,6 +236,14 @@ void S2LP::begin(void)
   /* enable the fast rx timer */
   S2LpTimerFastRxTermTimer(S_ENABLE);
 
+  uint8_t tmp = 0x90;
+  S2LPSpiWriteRegisters(0x76, 1, &tmp);
+
+  if(s_paInfo.paRfRangeExtender == RANGE_EXT_SKYWORKS_SKY66420)
+  {
+    FEM_Operation_SKY66420(FEM_RX);
+  }
+
   /* the RX command triggers the LDC in fast RX termination mode */
   S2LPCmdStrobeCommand(CMD_RX);
 
@@ -261,6 +275,14 @@ void S2LP::end(void)
   /* Reset SDN pin */
   pinMode(sdn_pin, INPUT);
 
+  /* Reset CSD, CPS and CTX if it is needed */
+  if(s_paInfo.paRfRangeExtender == RANGE_EXT_SKYWORKS_SKY66420)
+  {
+    pinMode(s_paInfo.paSignalCSD_MCU, INPUT);
+    pinMode(s_paInfo.paSignalCPS_MCU, INPUT);
+    pinMode(s_paInfo.paSignalCTX_MCU, INPUT);
+  }
+
   /* Reset all internal variables */  
   memset((void *)&g_xStatus, 0, sizeof(S2LPStatus));
   s_cWMbusSubmode = WMBUS_SUBMODE_NOT_CONFIGURED;
@@ -272,6 +294,7 @@ void S2LP::end(void)
   cRxData = 0;
   is_waiting_for_read = false;
   is_tx_done_before_read = false;
+  is_bypass_enabled = false;
 }
 
 /**
@@ -337,6 +360,14 @@ uint8_t S2LP::send(uint8_t *payload, uint8_t payload_len, uint8_t dest_addr, boo
 
   enableS2LPIrq();
 
+  uint8_t tmp=0x9C;
+  S2LPSpiWriteRegisters(0x76,1,&tmp);
+
+  if(s_paInfo.paRfRangeExtender == RANGE_EXT_SKYWORKS_SKY66420)
+  {
+    FEM_Operation_SKY66420(FEM_TX);
+  }
+
   S2LPCmdStrobeCommand(CMD_TX);
 
   start_time = millis();
@@ -361,6 +392,14 @@ uint8_t S2LP::send(uint8_t *payload, uint8_t payload_len, uint8_t dest_addr, boo
     is_tx_done_before_read = true;
   } else
   {
+    uint8_t tmp = 0x90;
+    S2LPSpiWriteRegisters(0x76, 1, &tmp);
+
+    if(s_paInfo.paRfRangeExtender == RANGE_EXT_SKYWORKS_SKY66420)
+    {
+      FEM_Operation_SKY66420(FEM_RX);
+    }
+
     /* Return to RX state */
     S2LPCmdStrobeCommand(CMD_RX);
   }
@@ -418,6 +457,13 @@ uint8_t S2LP::read(uint8_t *payload, uint8_t payload_len)
   if(is_tx_done_before_read)
   {
     is_tx_done_before_read = false;
+    uint8_t tmp = 0x90;
+    S2LPSpiWriteRegisters(0x76, 1, &tmp);
+
+    if(s_paInfo.paRfRangeExtender == RANGE_EXT_SKYWORKS_SKY66420)
+    {
+      FEM_Operation_SKY66420(FEM_RX);
+    }
 
     /* Return to RX state */
     S2LPCmdStrobeCommand(CMD_RX);
@@ -557,6 +603,79 @@ void S2LP::enableS2LPIrq(void)
     {
       attachInterrupt(irq_pin, irq_handler, FALLING);
     }
+  }
+}
+
+/**
+* @brief  Commands for external PA of type SKY66420.
+* @param  operation the command to be executed.
+* @retval None.
+*/
+void S2LP::FEM_Operation_SKY66420(FEM_OperationType operation)
+{
+  switch (operation)
+  {
+    case FEM_SHUTDOWN:
+    {
+      /* Puts CSD high to turn on PA */
+      digitalWrite(s_paInfo.paSignalCSD_MCU, LOW);
+
+      /* Puts CTX high to go in TX state DON'T CARE */
+      digitalWrite(s_paInfo.paSignalCTX_MCU, HIGH);
+
+      /* No Bypass mode select DON'T CARE */
+      digitalWrite(s_paInfo.paSignalCPS_MCU, HIGH);
+
+      break;
+    }
+    case FEM_TX_BYPASS:
+    {
+      /* Puts CSD high to turn on PA */
+      digitalWrite(s_paInfo.paSignalCSD_MCU, HIGH);
+
+      /* Puts CTX high to go in TX state */
+      digitalWrite(s_paInfo.paSignalCTX_MCU, HIGH);
+
+      /* Bypass mode select */
+      digitalWrite(s_paInfo.paSignalCPS_MCU, LOW);
+
+      break;
+    }
+    case FEM_TX:
+    {
+      /* Puts CSD high to turn on PA */
+      digitalWrite(s_paInfo.paSignalCSD_MCU, HIGH);
+
+      /* Puts CTX high to go in TX state */
+      digitalWrite(s_paInfo.paSignalCTX_MCU, HIGH);
+
+      /* No Bypass mode select DON'T CARE */
+      digitalWrite(s_paInfo.paSignalCPS_MCU, HIGH);
+
+      break;
+    }
+    case FEM_RX:
+    {
+      /* Puts CSD high to turn on PA */
+      digitalWrite(s_paInfo.paSignalCSD_MCU, HIGH);
+
+      /* Puts CTX low */
+      digitalWrite(s_paInfo.paSignalCTX_MCU, LOW);
+
+      /* Check Bypass mode */
+      if (is_bypass_enabled)
+      {
+        digitalWrite(s_paInfo.paSignalCPS_MCU, LOW);
+      } else
+      {
+        digitalWrite(s_paInfo.paSignalCPS_MCU, HIGH);
+      }
+
+      break;
+    }
+    default:
+      /* Error */
+      break;
   }
 }
 
