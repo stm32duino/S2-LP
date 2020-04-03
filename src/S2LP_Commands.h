@@ -110,24 +110,6 @@ typedef enum
  * @{
  */
 
-/**
- * @brief  Sends the TX command to S2-LP. Start to transmit.
- * @param  None.
- * @retval None.
- * @note: this macro sets the SMPS switching frequency to 5.46MHz about for ETSI regulation compliancy.
- */
-#define S2LPCmdStrobeTx()         {uint8_t tmp=0x9C; S2LPSpiWriteRegisters(0x76,1,&tmp);\
-                                        S2LPCmdStrobeCommand(CMD_TX);}
-
-/**
- * @brief  Sends the RX command to S2-LP. Start to receive.
- * @param  None.
- * @retval None.
- * @note: this macro sets the SMPS switching frequency to 3.12MHz.
- */
-#define S2LPCmdStrobeRx()         {uint8_t tmp=0x90; S2LPSpiWriteRegisters(0x76,1,&tmp);\
-                                    S2LPCmdStrobeCommand(CMD_RX);}
-
 #define S2LPCmdStrobeReady()      S2LPCmdStrobeCommand(CMD_READY)
 #define S2LPCmdStrobeStandby()    S2LPCmdStrobeCommand(CMD_STANDBY)
 #define S2LPCmdStrobeSleep()      S2LPCmdStrobeCommand(CMD_SLEEP)

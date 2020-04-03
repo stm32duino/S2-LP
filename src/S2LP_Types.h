@@ -150,6 +150,17 @@ typedef enum
   S2LP_CUT_3_0 = 0xC1,
 } S2LPCutType;
 
+/**
+ * @brief FEM Operation type. This definition represents the structure to manage External PA.
+ */
+typedef enum
+{
+  FEM_SHUTDOWN	= 0x00,
+  FEM_TX_BYPASS	= 0x01,
+  FEM_TX		= 0x02,
+  FEM_RX		= 0x03,
+} FEM_OperationType;
+
 
 /**
  * @}

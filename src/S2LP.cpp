@@ -55,12 +55,6 @@
 
 #define LINEAR_FIFO_ADDRESS		0xFF  /*!< Linear FIFO address*/
 
-#define XTAL_FREQUENCY          50000000U
-
-#define PREAMBLE_LENGTH (64*4)
-#define DATARATE 38400
-#define MIN_PERIOD_WAKEUP ((8000*((PREAMBLE_LENGTH/4)-2))/DATARATE)
-
 /* Class Implementation ------------------------------------------------------*/
 
 /** Constructor
@@ -89,7 +83,7 @@ S2LP::S2LP(SPIClass *spi, int csn, int sdn, int irqn, uint32_t frequency, uint32
   memset((void *)vectcTxBuff, 0, FIFO_SIZE*sizeof(uint8_t));
   cRxData = 0;
   is_waiting_for_read = false;
-  is_tx_done_before_read = false;
+  is_bypass_enabled = false;
 }
 
 /**
@@ -124,7 +118,7 @@ void S2LP::begin(void)
   SRadioInit xRadioInit = {
     lFrequencyBase, /* base carrier frequency */
     MOD_2FSK,       /* modulation type */
-    DATARATE,       /* data rate */
+    38400,          /* data rate */
     20000,          /* frequency deviation */
     100000          /* bandwidth */
   };
@@ -146,16 +140,21 @@ void S2LP::begin(void)
 
     if(s_paInfo.paRfRangeExtender == RANGE_EXT_SKYWORKS_SE2435L)
     {
-      S2LPGpioInit(&s_paInfo.paSignalCSD);
-      S2LPGpioInit(&s_paInfo.paSignalCPS);
-      S2LPGpioInit(&s_paInfo.paSignalCTX);
+      S2LPGpioInit(&s_paInfo.paSignalCSD_S2LP);
+      S2LPGpioInit(&s_paInfo.paSignalCPS_S2LP);
+      S2LPGpioInit(&s_paInfo.paSignalCTX_S2LP);
+    } else if(s_paInfo.paRfRangeExtender == RANGE_EXT_SKYWORKS_SKY66420)
+    {
+      pinMode(s_paInfo.paSignalCSD_MCU, OUTPUT);
+      pinMode(s_paInfo.paSignalCPS_MCU, OUTPUT);
+      pinMode(s_paInfo.paSignalCTX_MCU, OUTPUT);
     }
   }
 
   S2LPRadioSetPALevelMaxIndex(7);
 
   PktBasicInit xBasicInit={
-    PREAMBLE_LENGTH,    /* Preamble length */
+    16,                 /* Preamble length */
     32,                 /* Sync length */
     0x88888888,         /* Sync word */
     S_ENABLE,           /* Variable length */
@@ -180,7 +179,7 @@ void S2LP::begin(void)
   S2LPPktBasicAddressesInit(&xAddressInit);
 
   SCsmaInit xCsmaInit={
-    S_DISABLE,          /* Persistent mode enable/disable */
+    S_ENABLE,           /* Persistent mode enable/disable */
     CSMA_PERIOD_64TBIT, /* CS Period */
     3,                  /* CS Timeout */
     5,                  /* Max number of backoffs */
@@ -209,26 +208,23 @@ void S2LP::begin(void)
   S2LPGpioIrqConfig(RX_DATA_READY,S_ENABLE);
   S2LPGpioIrqConfig(TX_DATA_SENT , S_ENABLE);
 
-  /* IRQ registers blanking */
-  S2LPGpioIrqClearStatus();
-
   /* clear FIFO if needed */
   S2LPCmdStrobeFlushRxFifo();
 
-  /* set the LDC mode wkup */
-  S2LPTimerSetWakeUpTimerUs(1000*MIN_PERIOD_WAKEUP);
+  /* Set infinite Timeout */
+  S2LPTimerSetRxTimerCounter(0);
+  S2LPTimerSetRxTimerStopCondition(ANY_ABOVE_THRESHOLD);
 
-  /* set the rx timeout */
-  S2LPTimerSetRxTimerUs(30000);
+  /* IRQ registers blanking */
+  S2LPGpioIrqClearStatus();
 
-  /* use SLEEP_A mode (default) */
-  S2LPTimerSleepB(S_DISABLE);
+  uint8_t tmp = 0x90;
+  S2LPSpiWriteRegisters(0x76, 1, &tmp);
 
-  /* enable LDC mode, FAST RX TERM and start Rx */
-  S2LPTimerLdcrMode(S_ENABLE);
-
-  /* enable the fast rx timer */
-  S2LpTimerFastRxTermTimer(S_ENABLE);
+  if(s_paInfo.paRfRangeExtender == RANGE_EXT_SKYWORKS_SKY66420)
+  {
+    FEM_Operation_SKY66420(FEM_RX);
+  }
 
   /* the RX command triggers the LDC in fast RX termination mode */
   S2LPCmdStrobeCommand(CMD_RX);
@@ -261,6 +257,14 @@ void S2LP::end(void)
   /* Reset SDN pin */
   pinMode(sdn_pin, INPUT);
 
+  /* Reset CSD, CPS and CTX if it is needed */
+  if(s_paInfo.paRfRangeExtender == RANGE_EXT_SKYWORKS_SKY66420)
+  {
+    pinMode(s_paInfo.paSignalCSD_MCU, INPUT);
+    pinMode(s_paInfo.paSignalCPS_MCU, INPUT);
+    pinMode(s_paInfo.paSignalCTX_MCU, INPUT);
+  }
+
   /* Reset all internal variables */  
   memset((void *)&g_xStatus, 0, sizeof(S2LPStatus));
   s_cWMbusSubmode = WMBUS_SUBMODE_NOT_CONFIGURED;
@@ -271,7 +275,7 @@ void S2LP::end(void)
   memset((void *)vectcTxBuff, 0, FIFO_SIZE*sizeof(uint8_t));
   cRxData = 0;
   is_waiting_for_read = false;
-  is_tx_done_before_read = false;
+  is_bypass_enabled = false;
 }
 
 /**
@@ -312,10 +316,6 @@ uint8_t S2LP::send(uint8_t *payload, uint8_t payload_len, uint8_t dest_addr, boo
     return 1;
   }
 
-  /* Disable LDC */
-  S2LPTimerLdcrMode(S_DISABLE);
-  S2LpTimerFastRxTermTimer(S_DISABLE);
-
   S2LPPktBasicSetPayloadLength(payload_len);
 
   S2LPSetRxSourceReferenceAddress(dest_addr);
@@ -337,6 +337,14 @@ uint8_t S2LP::send(uint8_t *payload, uint8_t payload_len, uint8_t dest_addr, boo
 
   enableS2LPIrq();
 
+  uint8_t tmp=0x9C;
+  S2LPSpiWriteRegisters(0x76,1,&tmp);
+
+  if(s_paInfo.paRfRangeExtender == RANGE_EXT_SKYWORKS_SKY66420)
+  {
+    FEM_Operation_SKY66420(FEM_TX);
+  }
+
   S2LPCmdStrobeCommand(CMD_TX);
 
   start_time = millis();
@@ -352,15 +360,16 @@ uint8_t S2LP::send(uint8_t *payload, uint8_t payload_len, uint8_t dest_addr, boo
     S2LPCsma(S_DISABLE);
   }
 
-  /* Enable LDC */
-  S2LPTimerLdcrMode(S_ENABLE);
-  S2LpTimerFastRxTermTimer(S_ENABLE);
+  if(!is_waiting_for_read)
+  {
+    uint8_t tmp = 0x90;
+    S2LPSpiWriteRegisters(0x76, 1, &tmp);
 
-  if(is_waiting_for_read)
-  {
-    is_tx_done_before_read = true;
-  } else
-  {
+    if(s_paInfo.paRfRangeExtender == RANGE_EXT_SKYWORKS_SKY66420)
+    {
+      FEM_Operation_SKY66420(FEM_RX);
+    }
+
     /* Return to RX state */
     S2LPCmdStrobeCommand(CMD_RX);
   }
@@ -415,28 +424,62 @@ uint8_t S2LP::read(uint8_t *payload, uint8_t payload_len)
 
   is_waiting_for_read = false;
 
-  if(is_tx_done_before_read)
-  {
-    is_tx_done_before_read = false;
+  uint8_t tmp = 0x90;
+  S2LPSpiWriteRegisters(0x76, 1, &tmp);
 
-    /* Return to RX state */
-    S2LPCmdStrobeCommand(CMD_RX);
-  } else
+  if(s_paInfo.paRfRangeExtender == RANGE_EXT_SKYWORKS_SKY66420)
   {
-    /* Return to Sleep state */
-    S2LPCmdStrobeCommand(CMD_SLEEP);
-
-    if(S2LPManagementGetCut()==S2LP_CUT_2_0)
-    {
-      /* apply the workaround to exit from SLEEP (2nd part) */
-      delay(6);
-      S2LPTimerLdcIrqWa(S_DISABLE);
-    }
+    FEM_Operation_SKY66420(FEM_RX);
   }
+
+  /* Return to RX state */
+  S2LPCmdStrobeCommand(CMD_RX);
 
   enableS2LPIrq();
 
   return ret_val;
+}
+
+/**
+* @brief  Sets the channel number.
+* @param  cChannel the channel number.
+* @retval None.
+*/
+void S2LP::setRadioChannel(uint8_t cChannel)
+{
+  return S2LPRadioSetChannel(cChannel);
+}
+
+/**
+* @brief  Returns the actual channel number.
+* @param  None.
+* @retval uint8_t Actual channel number.
+*/
+uint8_t S2LP::getRadioChannel(void)
+{
+  return S2LPRadioGetChannel();
+}
+
+/**
+* @brief  Set the channel space factor in channel space register.
+*         The channel spacing step is computed as F_Xo/32768.
+* @param  fChannelSpace the channel space expressed in Hz.
+* @retval None.
+*/
+void S2LP::setRadioChannelSpace(uint32_t lChannelSpace)
+{
+  return S2LPRadioSetChannelSpace(lChannelSpace);
+}
+
+/**
+* @brief  Return the channel space register.
+* @param  None.
+* @retval uint32_t Channel space. The channel space is: CS = channel_space_factor x XtalFrequency/2^15
+*         where channel_space_factor is the CHSPACE register value.
+*/
+uint32_t S2LP::getRadioChannelSpace(void)
+{
+  return S2LPRadioGetChannelSpace();
 }
 
 /**
@@ -450,20 +493,12 @@ uint8_t S2LP::S2LPSetReadyState(void)
   uint32_t start_time;
   uint32_t current_time;
 
+  S2LPCmdStrobeCommand(CMD_SABORT);
+
   start_time = millis();
 
   do
   {
-    S2LPRefreshStatus();
-
-    if(g_xStatus.MC_STATE == MC_STATE_RX || g_xStatus.MC_STATE == MC_STATE_TX)
-    {
-      S2LPCmdStrobeCommand(CMD_SABORT);
-    } else
-    {
-      S2LPCmdStrobeCommand(CMD_READY);
-    }
-
     S2LPRefreshStatus();
 
     current_time = millis();
@@ -508,11 +543,6 @@ void S2LP::S2LPIrqHandler(void)
   /* Check the S2LP RX_DATA_READY IRQ flag */
   if(xIrqStatus.IRQ_RX_DATA_READY)
   {
-    if(S2LPManagementGetCut()==S2LP_CUT_2_0)
-    {/* apply the workaround to exit from SLEEP (1st part) */
-      S2LPTimerLdcIrqWa(S_ENABLE);
-    }
-
     /* Get the RX FIFO size */
     cRxData = S2LPFifoReadNumberBytesRxFifo();
 
@@ -557,6 +587,79 @@ void S2LP::enableS2LPIrq(void)
     {
       attachInterrupt(irq_pin, irq_handler, FALLING);
     }
+  }
+}
+
+/**
+* @brief  Commands for external PA of type SKY66420.
+* @param  operation the command to be executed.
+* @retval None.
+*/
+void S2LP::FEM_Operation_SKY66420(FEM_OperationType operation)
+{
+  switch (operation)
+  {
+    case FEM_SHUTDOWN:
+    {
+      /* Puts CSD high to turn on PA */
+      digitalWrite(s_paInfo.paSignalCSD_MCU, LOW);
+
+      /* Puts CTX high to go in TX state DON'T CARE */
+      digitalWrite(s_paInfo.paSignalCTX_MCU, HIGH);
+
+      /* No Bypass mode select DON'T CARE */
+      digitalWrite(s_paInfo.paSignalCPS_MCU, HIGH);
+
+      break;
+    }
+    case FEM_TX_BYPASS:
+    {
+      /* Puts CSD high to turn on PA */
+      digitalWrite(s_paInfo.paSignalCSD_MCU, HIGH);
+
+      /* Puts CTX high to go in TX state */
+      digitalWrite(s_paInfo.paSignalCTX_MCU, HIGH);
+
+      /* Bypass mode select */
+      digitalWrite(s_paInfo.paSignalCPS_MCU, LOW);
+
+      break;
+    }
+    case FEM_TX:
+    {
+      /* Puts CSD high to turn on PA */
+      digitalWrite(s_paInfo.paSignalCSD_MCU, HIGH);
+
+      /* Puts CTX high to go in TX state */
+      digitalWrite(s_paInfo.paSignalCTX_MCU, HIGH);
+
+      /* No Bypass mode select DON'T CARE */
+      digitalWrite(s_paInfo.paSignalCPS_MCU, HIGH);
+
+      break;
+    }
+    case FEM_RX:
+    {
+      /* Puts CSD high to turn on PA */
+      digitalWrite(s_paInfo.paSignalCSD_MCU, HIGH);
+
+      /* Puts CTX low */
+      digitalWrite(s_paInfo.paSignalCTX_MCU, LOW);
+
+      /* Check Bypass mode */
+      if (is_bypass_enabled)
+      {
+        digitalWrite(s_paInfo.paSignalCPS_MCU, LOW);
+      } else
+      {
+        digitalWrite(s_paInfo.paSignalCPS_MCU, HIGH);
+      }
+
+      break;
+    }
+    default:
+      /* Error */
+      break;
   }
 }
 
