@@ -226,7 +226,7 @@ void S2LP::begin(void)
     FEM_Operation_SKY66420(FEM_RX);
   }
 
-  /* the RX command triggers the LDC in fast RX termination mode */
+  /* Go to RX state */
   S2LPCmdStrobeCommand(CMD_RX);
 
   enableS2LPIrq();
