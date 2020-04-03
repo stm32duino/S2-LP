@@ -109,6 +109,10 @@ class S2LP
     uint8_t send(uint8_t *payload, uint8_t payload_len, uint8_t dest_addr, bool use_csma_ca = true);
     uint8_t getRecvPayloadLen(void);
     uint8_t read(uint8_t *payload, uint8_t payload_len);
+    void setRadioChannel(uint8_t cChannel);
+    uint8_t getRadioChannel(void);
+    void setRadioChannelSpace(uint32_t lChannelSpace);
+    uint32_t getRadioChannelSpace(void);
 
   protected:
     uint8_t S2LPSetReadyState(void);
@@ -371,8 +375,7 @@ class S2LP
     uint8_t vectcTxBuff[FIFO_SIZE];
     uint8_t cRxData;
     volatile bool is_waiting_for_read;
-    volatile bool is_tx_done_before_read;
-	bool is_bypass_enabled;
+    bool is_bypass_enabled;
 };
 
 #endif /* __S2LP_H__ */
