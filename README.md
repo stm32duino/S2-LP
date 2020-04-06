@@ -12,7 +12,7 @@ For SPI it is then required to create a SPI interface before accessing to the se
 
 An instance can be created and enabled with SPI bus following the procedure below:  
 
-    myS2LP = new S2LP(devSPI, A1, D7, A5, S2LP_GPIO_3, 0x44, 0xEE, 0xFF, 868000000);
+    myS2LP = new S2LP(devSPI, A1, D7, A5, 868000000, 50000000, paInfo, S2LP_GPIO_3, 0x44, 0xEE, 0xFF);
     myS2LP->begin();
 
 In order to be notified when a new packet is received we must register a callback function
