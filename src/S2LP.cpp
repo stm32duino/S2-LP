@@ -229,7 +229,7 @@ void S2LP::begin(void)
   /* Go to RX state */
   S2LPCmdStrobeCommand(CMD_RX);
 
-  enableS2LPIrq();
+  attachInterrupt(irq_pin, irq_handler, FALLING);
 }
 
 /**
@@ -569,7 +569,10 @@ void S2LP::S2LPIrqHandler(void)
 */
 void S2LP::disableS2LPIrq(void)
 {
-  detachInterrupt(irq_pin);
+  if(nr_of_irq_disabled == 0)
+  {
+    detachInterrupt(irq_pin);
+  }
   nr_of_irq_disabled++;
 }
 
