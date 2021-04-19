@@ -199,7 +199,7 @@ void S2LP::begin(void)
 
   S2LPManagementRcoCalibration();
 
-  /* Enable SQI */
+  /* Enable PQI */
   S2LPRadioSetPqiCheck(0x00);
   S2LPRadioSetPqiCheck(S_ENABLE);
 
