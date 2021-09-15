@@ -457,7 +457,7 @@ void S2LP::S2LPCsmaSetCcaLength(uint8_t xCcaLength)
   S2LPSpiReadRegisters(CSMA_CONF0_ADDR, 1, &tmp);
 
   tmp &= ~CCA_LEN_REGMASK;
-  tmp |= xCcaLength;
+  tmp |= (xCcaLength<<4);
 
   g_xStatus = S2LPSpiWriteRegisters(CSMA_CONF0_ADDR, 1, &tmp);
 
