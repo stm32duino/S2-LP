@@ -128,7 +128,7 @@ class S2LP
     S2LPStatus S2LPSpiWriteFifo(uint8_t cNbBytes, uint8_t* pcBuffer);
     S2LPStatus S2LPSpiReadFifo(uint8_t cNbBytes, uint8_t* pcBuffer);
     void SpiSendRecv(uint8_t *pcHeader, uint8_t *pcBuffer, uint16_t cNbBytes);
-    void S2LPManagementRcoCalibration(void);
+    int32_t S2LPManagementRcoCalibration(void);
     void S2LPCmdStrobeCommand(S2LPCmd xCommandCode);
     void S2LPGeneralSetExtRef(ModeExtRef xExtMode);
     ModeExtRef S2LPGeneralGetExtRef(void);

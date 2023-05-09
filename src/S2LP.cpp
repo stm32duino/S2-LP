@@ -793,33 +793,55 @@ void S2LP::SpiSendRecv(uint8_t *pcHeader, uint8_t *pcBuffer, uint16_t cNbBytes)
 /**
 * @brief  Management of RCO calibration.
 * @param  None.
-* @retval None.
+* @retval Error code:  0 on success, -1 on error during calibration of RCO.
 */
-void S2LP::S2LPManagementRcoCalibration(void)
+int32_t S2LP::S2LPManagementRcoCalibration(void)
 {
-  uint8_t tmp[2],tmp2;
+  uint8_t tmp[2], tmp2;
+  uint8_t n_err = 0;
+  int32_t ret_val = 0;
 
   S2LPSpiReadRegisters(0x6D, 1, &tmp2);
   tmp2 |= 0x01;
   S2LPSpiWriteRegisters(0x6D, 1, &tmp2);
 
-  S2LPSpiCommandStrobes(0x63);
-  delay(100);
-  S2LPSpiCommandStrobes(0x62);
-
   do
   {
     S2LPSpiReadRegisters(0x8D, 1, tmp);
+
+    //Check RCO Calibration Error and retry MAX_RCO_ERR times
+    if ((tmp[0]&0x01) == 1)
+    {
+      //Disable TimerCalibrationRco
+      S2LPSpiReadRegisters(0x6D, 1, &tmp2);
+      tmp2 &= 0xFE;
+      S2LPSpiWriteRegisters(0x6D, 1, &tmp2);
+
+      //Enable TimerCalibrationRco
+      S2LPSpiReadRegisters(0x6D, 1, &tmp2);
+      tmp2 |= 0x01;
+      S2LPSpiWriteRegisters(0x6D, 1, &tmp2);
+      n_err++;
+    }
   }
-  while((tmp[0]&0x10)==0);
+  while((tmp[0]&0x10) == 0 && n_err <= 3);
 
-  S2LPSpiReadRegisters(0x94, 2, tmp);
-  S2LPSpiReadRegisters(0x6F, 1, &tmp2);
-  tmp[1]=(tmp[1]&0x80)|(tmp2&0x7F);
+  if (n_err <= 3)
+  {
+    S2LPSpiReadRegisters(0x94, 2, tmp);
+    S2LPSpiReadRegisters(0x6F, 1, &tmp2);
+    tmp[1]=(tmp[1]&0x80)|(tmp2&0x7F);
 
-  S2LPSpiWriteRegisters(0x6E, 2, tmp);
-  S2LPSpiReadRegisters(0x6D, 1, &tmp2);
-  tmp2 &= 0xFE;
+    S2LPSpiWriteRegisters(0x6E, 2, tmp);
+    S2LPSpiReadRegisters(0x6D, 1, &tmp2);
+    tmp2 &= 0xFE;
 
-  S2LPSpiWriteRegisters(0x6D, 1, &tmp2);
+    S2LPSpiWriteRegisters(0x6D, 1, &tmp2);
+  }
+  else
+  {
+    ret_val = -1;
+  }
+
+  return ret_val;
 }
